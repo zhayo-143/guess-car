@@ -1,0 +1,1876 @@
+<!--
+PeerJS CDN 地址和引入方式：
+CDN地址: https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js
+引入方式: <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
+或使用 jsDelivr: <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.1/dist/peerjs.min.js"></script>
+
+PeerJS 使用 WebRTC 实现点对点通信，需要连接信令服务器建立连接。
+默认使用 0.peerjs.com 作为信令服务器（免费服务）。
+图片数据通过 DataConnection 以 base64 格式在内存中传输，不上传任何服务器。
+
+新增功能说明：
+- 房主上传图片前，有明显的版权/法律提醒
+- 玩家端设有【举报】按钮，点击后房间自动停止游戏，图片立即撤销，所有玩家同步看到终止状态
+-->
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🏎️ 车迷猜图 - 联机竞猜</title>
+    <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js">
+    </script>
+    <style>
+        :root {
+            --bg: #0d0d14;
+            --bg-card: #1a1a2e;
+            --bg-card-hover: #22223a;
+            --bg-input: #12121f;
+            --text: #e0e0e0;
+            --text-secondary: #a0a0b8;
+            --accent: #e63946;
+            --accent-gold: #f0c040;
+            --green: #4ade80;
+            --green-bg: rgba(74, 222, 128, 0.15);
+            --red: #ef4444;
+            --red-bg: rgba(239, 68, 68, 0.15);
+            --yellow: #fbbf24;
+            --yellow-bg: rgba(251, 191, 36, 0.15);
+            --border: #2a2a3d;
+            --border-active: #e63946;
+            --radius: 12px;
+            --radius-sm: 8px;
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+            --transition: 0.2s ease;
+            --font-mono: 'SF Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-image:
+                radial-gradient(ellipse at 20% 20%, rgba(230, 57, 70, 0.06) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 70%, rgba(240, 192, 64, 0.04) 0%, transparent 60%),
+                radial-gradient(ellipse at 50% 50%, rgba(255, 255, 255, 0.015) 0%, transparent 80%);
+            background-attachment: fixed;
+            padding: 16px;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 560px;
+            position: relative;
+        }
+
+        /* 标题 */
+        .header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+        .header .logo {
+            font-size: 2.8em;
+            margin-bottom: 4px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%,
+            100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.08);
+            }
+        }
+        .header h1 {
+            font-size: 1.8em;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #fff 0%, #ccc 50%, #f0c040 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 4px;
+        }
+        .header .subtitle {
+            font-size: 0.9em;
+            color: var(--text-secondary);
+            letter-spacing: 1px;
+        }
+
+        /* 卡片 */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            margin-bottom: 16px;
+            box-shadow: var(--shadow);
+            transition: border-color var(--transition);
+        }
+        .card.active-card {
+            border-color: var(--border-active);
+            box-shadow: 0 0 0 3px rgba(230, 57, 70, 0.08), var(--shadow);
+        }
+
+        .card-title {
+            font-size: 1.05em;
+            font-weight: 700;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            letter-spacing: 0.3px;
+        }
+        .card-title .icon {
+            font-size: 1.3em;
+        }
+
+        /* 按钮 */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border-radius: var(--radius-sm);
+            font-size: 0.95em;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            letter-spacing: 0.3px;
+            transition: all var(--transition);
+            white-space: nowrap;
+            position: relative;
+            overflow: hidden;
+        }
+        .btn:active {
+            transform: scale(0.96);
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 4px 16px rgba(230, 57, 70, 0.3);
+        }
+        .btn-primary:hover {
+            background: #d43540;
+            box-shadow: 0 6px 20px rgba(230, 57, 70, 0.4);
+        }
+        .btn-primary:disabled {
+            background: #5a2a30;
+            color: #999;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+        .btn-outline {
+            background: transparent;
+            border: 2px solid var(--border);
+            color: var(--text);
+        }
+        .btn-outline:hover {
+            border-color: var(--accent);
+            color: #fff;
+            background: rgba(230, 57, 70, 0.06);
+        }
+        .btn-sm {
+            padding: 7px 14px;
+            font-size: 0.82em;
+            border-radius: 6px;
+        }
+        .btn-xs {
+            padding: 5px 10px;
+            font-size: 0.75em;
+            border-radius: 5px;
+            min-width: 36px;
+        }
+        .btn-success {
+            background: #22c55e;
+            color: #fff;
+            border: none;
+        }
+        .btn-success:hover {
+            background: #1ea84e;
+        }
+        .btn-danger {
+            background: #ef4444;
+            color: #fff;
+            border: none;
+        }
+        .btn-danger:hover {
+            background: #d63030;
+        }
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            padding: 6px 10px;
+        }
+        .btn-ghost:hover {
+            color: #fff;
+            border-color: var(--border);
+        }
+        .btn-full {
+            width: 100%;
+            justify-content: center;
+        }
+        .btn-warning {
+            background: #f97316;
+            color: #fff;
+            border: none;
+        }
+        .btn-warning:hover {
+            background: #ea580c;
+        }
+
+        /* 输入框 */
+        .input-group {
+            margin-bottom: 14px;
+        }
+        .input-group label {
+            display: block;
+            font-size: 0.82em;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+        }
+        .input-group input,
+        .input-group textarea {
+            width: 100%;
+            padding: 11px 14px;
+            background: var(--bg-input);
+            border: 2px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: #fff;
+            font-size: 0.95em;
+            font-family: inherit;
+            transition: border-color var(--transition);
+            outline: none;
+            resize: vertical;
+        }
+        .input-group input:focus,
+        .input-group textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(230, 57, 70, 0.06);
+        }
+        .input-group input::placeholder,
+        .input-group textarea::placeholder {
+            color: #555;
+        }
+        .input-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+        .input-row {
+            display: flex;
+            gap: 10px;
+        }
+        .input-row .input-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        /* 房间号显示 */
+        .room-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-input);
+            border: 2px solid var(--accent-gold);
+            border-radius: 50px;
+            padding: 8px 18px;
+            font-family: var(--font-mono);
+            font-size: 1.3em;
+            font-weight: 700;
+            letter-spacing: 4px;
+            color: var(--accent-gold);
+        }
+        .room-badge .label {
+            font-size: 0.55em;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-weight: 400;
+        }
+
+        /* 图片上传区 */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 28px;
+            text-align: center;
+            cursor: pointer;
+            transition: all var(--transition);
+            min-height: 120px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background: var(--bg-input);
+            position: relative;
+            overflow: hidden;
+        }
+        .upload-zone:hover {
+            border-color: var(--accent);
+            background: rgba(230, 57, 70, 0.03);
+        }
+        .upload-zone.has-image {
+            border-style: solid;
+            border-color: var(--green);
+            padding: 8px;
+        }
+        .upload-zone img {
+            max-width: 100%;
+            max-height: 280px;
+            border-radius: var(--radius-sm);
+            object-fit: contain;
+            display: block;
+        }
+        .upload-zone .upload-icon {
+            font-size: 2.5em;
+            opacity: 0.5;
+        }
+        .upload-zone .upload-text {
+            font-size: 0.9em;
+            color: var(--text-secondary);
+        }
+        .upload-zone input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        /* 提醒条 */
+        .reminder-banner {
+            background: rgba(251, 191, 36, 0.1);
+            border: 1px solid rgba(251, 191, 36, 0.35);
+            border-radius: var(--radius-sm);
+            padding: 12px 14px;
+            margin-bottom: 16px;
+            font-size: 0.83em;
+            color: #fcd34d;
+            text-align: center;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: center;
+        }
+        .reminder-banner .icon {
+            font-size: 1.2em;
+        }
+
+        /* 图片展示（发布后） */
+        .image-display {
+            border-radius: var(--radius);
+            overflow: hidden;
+            border: 2px solid var(--border);
+            background: #000;
+        }
+        .image-display img {
+            width: 100%;
+            max-height: 320px;
+            object-fit: contain;
+            display: block;
+            background: #000;
+        }
+
+        /* 提示列表 */
+        .hints-list {
+            list-style: none;
+            padding: 0;
+        }
+        .hints-list li {
+            padding: 10px 14px;
+            background: var(--bg-input);
+            border-radius: var(--radius-sm);
+            margin-bottom: 8px;
+            border-left: 3px solid var(--accent-gold);
+            font-size: 0.9em;
+            color: #ddd;
+            letter-spacing: 0.3px;
+        }
+        .hints-list li .hint-num {
+            color: var(--accent-gold);
+            font-weight: 700;
+            margin-right: 6px;
+        }
+
+        /* 答案列表 */
+        .answer-list {
+            list-style: none;
+            padding: 0;
+            max-height: 360px;
+            overflow-y: auto;
+        }
+        .answer-list li {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+            margin-bottom: 6px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            transition: all var(--transition);
+            flex-wrap: wrap;
+        }
+        .answer-list li.correct {
+            border-color: var(--green);
+            background: var(--green-bg);
+        }
+        .answer-list li.wrong {
+            border-color: var(--red);
+            background: var(--red-bg);
+        }
+        .answer-list li.pending {
+            border-color: var(--yellow);
+            background: var(--yellow-bg);
+        }
+        .answer-list .player-name {
+            font-weight: 700;
+            font-size: 0.85em;
+            min-width: 50px;
+            color: #fff;
+            flex-shrink: 0;
+        }
+        .answer-list .answer-text {
+            flex: 1;
+            font-size: 0.9em;
+            color: #ccc;
+            word-break: break-word;
+            min-width: 100px;
+        }
+        .answer-list .status-badge {
+            font-size: 0.78em;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 20px;
+            flex-shrink: 0;
+            letter-spacing: 0.3px;
+        }
+        .status-correct {
+            background: var(--green);
+            color: #000;
+        }
+        .status-wrong {
+            background: var(--red);
+            color: #fff;
+        }
+        .status-pending {
+            background: transparent;
+            border: 1px solid var(--yellow);
+            color: var(--yellow);
+        }
+        .answer-list .btn-group {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        /* 在线玩家 */
+        .player-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .player-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: #ccc;
+        }
+        .player-tag .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: blink 1.5s ease-in-out infinite;
+        }
+        @keyframes blink {
+            0%,
+            100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.3;
+            }
+        }
+        .player-tag.host-tag {
+            border-color: var(--accent-gold);
+            color: var(--accent-gold);
+        }
+        .player-tag.host-tag .dot {
+            background: var(--accent-gold);
+        }
+
+        /* 状态栏 */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+        .status-connected {
+            background: rgba(74, 222, 128, 0.12);
+            color: var(--green);
+            border: 1px solid rgba(74, 222, 128, 0.3);
+        }
+        .status-waiting {
+            background: rgba(251, 191, 36, 0.12);
+            color: var(--yellow);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+        }
+        .status-disconnected {
+            background: rgba(239, 68, 68, 0.12);
+            color: var(--red);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        /* 举报按钮 */
+        .report-btn {
+            margin-top: 12px;
+            text-align: right;
+        }
+        .report-btn .btn {
+            background: transparent;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            color: #ef4444;
+            font-size: 0.78em;
+            padding: 6px 14px;
+        }
+        .report-btn .btn:hover {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: #ef4444;
+        }
+
+        /* 模态弹窗 */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            animation: fadeIn 0.2s ease;
+            padding: 20px;
+        }
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+        .modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 28px;
+            max-width: 440px;
+            width: 100%;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+            animation: slideUp 0.25s ease;
+        }
+        @keyframes slideUp {
+            from {
+                transform: translateY(30px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+        .modal h2 {
+            font-size: 1.3em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .modal .rules-list {
+            list-style: none;
+            padding: 0;
+            margin-bottom: 20px;
+        }
+        .modal .rules-list li {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9em;
+            color: #ccc;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+        .modal .rules-list li .rule-num {
+            color: var(--accent-gold);
+            font-weight: 700;
+            flex-shrink: 0;
+            min-width: 22px;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-size: 0.85em;
+            font-weight: 600;
+            z-index: 2000;
+            animation: toastIn 0.3s ease, toastOut 0.3s ease 2.5s forwards;
+            pointer-events: none;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        }
+        @keyframes toastIn {
+            from {
+                opacity: 0;
+                transform: translateX(-50%) translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+        }
+        @keyframes toastOut {
+            from {
+                opacity: 1;
+            }
+            to {
+                opacity: 0;
+                transform: translateX(-50%) translateY(-20px);
+            }
+        }
+
+        /* 分隔线 */
+        .divider {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 16px 0;
+        }
+
+        /* 提示条 */
+        .info-banner {
+            background: rgba(240, 192, 64, 0.08);
+            border: 1px solid rgba(240, 192, 64, 0.25);
+            border-radius: var(--radius-sm);
+            padding: 12px 16px;
+            font-size: 0.85em;
+            color: #ddd;
+            text-align: center;
+            letter-spacing: 0.3px;
+        }
+        .info-banner .emoji {
+            font-size: 1.3em;
+        }
+
+        /* 房间终止通告 */
+        .terminated-banner {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid #ef4444;
+            color: #fca5a5;
+            text-align: center;
+            padding: 18px;
+            font-weight: 700;
+            font-size: 0.95em;
+            margin: 16px 0;
+            border-radius: var(--radius-sm);
+        }
+
+        /* 滚动条 */
+        ::-webkit-scrollbar {
+            width: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* 响应式 */
+        @media (max-width: 480px) {
+            .header .logo {
+                font-size: 2.2em;
+            }
+            .header h1 {
+                font-size: 1.4em;
+            }
+            .card {
+                padding: 16px;
+            }
+            .room-badge {
+                font-size: 1.1em;
+                letter-spacing: 3px;
+                padding: 6px 14px;
+            }
+            .btn {
+                padding: 10px 18px;
+                font-size: 0.88em;
+            }
+            .answer-list li {
+                padding: 8px 10px;
+                gap: 6px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container" id="app">
+        <!-- 头部 -->
+        <div class="header">
+            <div class="logo">🏎️</div>
+            <h1>车迷猜图</h1>
+            <p class="subtitle">P2P 联机竞猜 · 无需服务器</p>
+        </div>
+
+        <!-- 初始界面：选择创建或加入 -->
+        <div id="lobbyView">
+            <!-- 创建房间 -->
+            <div class="card active-card" style="margin-bottom:14px;">
+                <div class="card-title"><span class="icon">🎯</span> 创建房间（房主）</div>
+                <p style="font-size:0.82em;color:var(--text-secondary);margin-bottom:14px;">
+                    作为房主，你可以上传图片并设置提示，邀请好友来猜图。
+                </p>
+                <button class="btn btn-primary btn-full" onclick="createRoom()" id="btnCreateRoom">
+                    🏁 创建房间
+                </button>
+                <p style="font-size:0.72em;color:#555;margin-top:8px;text-align:center;">
+                    点击后自动生成6位房间号
+                </p>
+            </div>
+
+            <!-- 加入房间 -->
+            <div class="card">
+                <div class="card-title"><span class="icon">🚗</span> 加入房间（玩家）</div>
+                <div class="input-group">
+                    <label>你的昵称</label>
+                    <input type="text" id="playerNickname" placeholder="输入你的昵称（如：赛车手小王）" maxlength="20" autocomplete="off">
+                </div>
+                <div class="input-group">
+                    <label>房间号</label>
+                    <input type="text" id="roomCodeInput" placeholder="输入6位数字房间号" maxlength="6" autocomplete="off"
+                    inputmode="numeric" pattern="[0-9]*">
+                </div>
+                <button class="btn btn-outline btn-full" onclick="joinRoom()" id="btnJoinRoom">
+                    🔗 加入房间
+                </button>
+                <p style="font-size:0.72em;color:#555;margin-top:8px;text-align:center;">
+                    加入后自动弹出游戏规则
+                </p>
+            </div>
+        </div>
+
+        <!-- 房主界面 -->
+        <div id="hostView" style="display:none;">
+            <!-- 房间信息 -->
+            <div class="card" style="text-align:center;">
+                <div style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;">
+                    <span style="font-size:0.85em;color:var(--text-secondary);">房间号：</span>
+                    <span class="room-badge" id="hostRoomBadge">------</span>
+                    <button class="btn btn-ghost btn-sm" onclick="copyRoomCode()" title="复制房间号">📋 复制</button>
+                </div>
+                <div style="margin-top:10px;">
+                    <span class="status-bar status-waiting" id="hostConnStatus">
+                        <span>⏳</span> 等待玩家加入...
+                    </span>
+                </div>
+                <div class="player-tags" id="hostPlayerTags" style="margin-top:10px;justify-content:center;"></div>
+            </div>
+
+            <!-- 上传图片和提示（发布前） -->
+            <div class="card" id="hostPublishCard">
+                <div class="card-title"><span class="icon">📸</span> 设置题目</div>
+
+                <!-- 重要提醒 -->
+                <div class="reminder-banner">
+                    <span class="icon">⚠️</span>
+                    <span>本游戏仅供车友娱乐，请勿上传违法违规或侵犯他人权益的图片</span>
+                </div>
+
+                <div class="upload-zone" id="uploadZone" onclick="document.getElementById('imageFileInput').click();">
+                    <span class="upload-icon">🖼️</span>
+                    <span class="upload-text">点击上传猜图图片（必需）</span>
+                    <span style="font-size:0.7em;color:#555;">支持 JPG/PNG/WebP，建议 ≤ 3MB</span>
+                    <input type="file" id="imageFileInput" accept="image/*" onchange="handleImageUpload(event)" style="display:none;">
+                </div>
+                <div class="input-group" style="margin-top:14px;">
+                    <label>提示文字（每行一条提示，可选）</label>
+                    <textarea id="hostHintsInput" placeholder="输入提示文字，每行一条...&#10;例如：&#10;这是一款经典跑车&#10;产于90年代&#10;标志性的跳灯设计"></textarea>
+                </div>
+                <button class="btn btn-primary btn-full" onclick="publishContent()" id="btnPublish" disabled>
+                    📢 发布题目
+                </button>
+                <p style="font-size:0.72em;color:#555;margin-top:6px;text-align:center;">
+                    发布后所有玩家将看到图片和提示
+                </p>
+            </div>
+
+            <!-- 发布后的展示区 -->
+            <div class="card" id="hostPublishedCard" style="display:none;">
+                <div class="card-title"><span class="icon">📢</span> 已发布的题目</div>
+                <div class="image-display" id="hostImageDisplay"></div>
+                <ul class="hints-list" id="hostHintsDisplay" style="margin-top:12px;"></ul>
+                <p style="font-size:0.75em;color:#555;margin-top:8px;text-align:center;">题目已锁定，等待玩家提交答案</p>
+            </div>
+
+            <!-- 答案列表 -->
+            <div class="card" id="hostAnswersCard" style="display:none;">
+                <div class="card-title"><span class="icon">📝</span> 玩家答案</div>
+                <ul class="answer-list" id="hostAnswerList">
+                    <li style="color:var(--text-secondary);text-align:center;padding:20px;">
+                        暂无玩家提交答案
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 房间终止通告（房主端） -->
+            <div id="hostTerminatedCard" style="display:none;" class="card">
+                <div class="terminated-banner">
+                    🚫 该房间因被举报而停止游戏，图片已撤销
+                </div>
+            </div>
+
+            <!-- 退出 -->
+            <button class="btn btn-ghost btn-sm btn-full" onclick="leaveRoom()" style="margin-top:8px;">
+                🚪 退出房间
+            </button>
+        </div>
+
+        <!-- 玩家界面 -->
+        <div id="playerView" style="display:none;">
+            <!-- 房间信息 -->
+            <div class="card" style="text-align:center;">
+                <div style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;">
+                    <span style="font-size:0.85em;color:var(--text-secondary);">房间号：</span>
+                    <span class="room-badge" id="playerRoomBadge">------</span>
+                </div>
+                <div style="margin-top:10px;">
+                    <span class="status-bar status-connected" id="playerConnStatus">
+                        <span>🟢</span> 已连接
+                    </span>
+                </div>
+                <div class="player-tags" id="playerPlayerTags" style="margin-top:10px;justify-content:center;"></div>
+
+                <!-- 举报按钮 -->
+                <div class="report-btn">
+                    <button class="btn" onclick="reportRoom()" id="btnReport">
+                        🚩 举报违规图片
+                    </button>
+                </div>
+            </div>
+
+            <!-- 等待房主发布 -->
+            <div class="card" id="playerWaitingCard">
+                <div class="info-banner">
+                    <span class="emoji">⏳</span> 等待房主发布题目...
+                </div>
+            </div>
+
+            <!-- 题目展示 -->
+            <div class="card" id="playerContentCard" style="display:none;">
+                <div class="card-title"><span class="icon">📸</span> 题目</div>
+                <div class="image-display" id="playerImageDisplay"></div>
+                <ul class="hints-list" id="playerHintsDisplay" style="margin-top:12px;"></ul>
+            </div>
+
+            <!-- 提交答案 -->
+            <div class="card" id="playerSubmitCard" style="display:none;">
+                <div class="card-title"><span class="icon">💡</span> 提交你的答案</div>
+                <div class="input-group">
+                    <input type="text" id="playerAnswerInput" placeholder="输入你的猜测答案..." maxlength="100" autocomplete="off">
+                </div>
+                <button class="btn btn-primary btn-full" onclick="submitAnswer()" id="btnSubmitAnswer">
+                    ✉️ 提交答案
+                </button>
+                <p style="font-size:0.72em;color:#555;margin-top:6px;text-align:center;">
+                    可多次提交修改答案，以最后一次为准
+                </p>
+            </div>
+
+            <!-- 所有答案和判定 -->
+            <div class="card" id="playerAnswersCard" style="display:none;">
+                <div class="card-title"><span class="icon">📋</span> 竞猜结果</div>
+                <ul class="answer-list" id="playerAnswerList">
+                    <li style="color:var(--text-secondary);text-align:center;padding:20px;">
+                        暂无答案
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 房间终止通告（玩家端） -->
+            <div id="playerTerminatedCard" style="display:none;" class="card">
+                <div class="terminated-banner">
+                    🚫 该房间因被举报而停止游戏，图片已撤销
+                </div>
+            </div>
+
+            <!-- 退出 -->
+            <button class="btn btn-ghost btn-sm btn-full" onclick="leaveRoom()" style="margin-top:8px;">
+                🚪 退出房间
+            </button>
+        </div>
+    </div>
+
+    <!-- 规则弹窗（隐藏） -->
+    <div class="modal-overlay" id="rulesModal" style="display:none;">
+        <div class="modal">
+            <h2>🏎️ 游戏规则</h2>
+            <ul class="rules-list">
+                <li><span class="rule-num">1</span> 房主会发布一张图片和若干提示文字</li>
+                <li><span class="rule-num">2</span> 你需要仔细观察图片，结合提示猜出正确答案</li>
+                <li><span class="rule-num">3</span> 在输入框中提交你的猜测答案（可多次修改）</li>
+                <li><span class="rule-num">4</span> 房主会逐个判定答案的对错</li>
+                <li><span class="rule-num">5</span> 判定结果会<span style="color:#4ade80;">实时显示</span>在所有人屏幕上</li>
+                <li><span class="rule-num">6</span> 如发现违规图片，可点击<span style="color:#ef4444;">举报</span>，房间将立即停止</li>
+                <li><span class="rule-num">7</span> <span style="color:#f0c040;">祝你好运，赛车手！</span> 🏁</li>
+            </ul>
+            <button class="btn btn-primary btn-full" onclick="closeRulesModal()">
+                👍 知道了，开始竞猜！
+            </button>
+        </div>
+    </div>
+
+    <!-- Toast容器 -->
+    <div id="toastContainer"></div>
+
+    <script>
+        // ==================== 全局状态 ====================
+        const PEER_PREFIX = 'car-guess-';
+        let myRole = null; // 'host' | 'player'
+        let myPeer = null;
+        let myRoomCode = null;
+        let myNickname = null;
+        let connections = {}; // 房主端：{ connectionId: { conn, nickname, answer, result } }
+        let hostConn = null; // 玩家端：到房主的单个连接
+        let publishedImageBase64 = null;
+        let publishedHints = [];
+        let isPublished = false;
+        let allAnswers = []; // [{ nickname, answer, result }]  // result: null | 'correct' | 'wrong'
+        let myAnswerSubmitted = false;
+        let myAnswerText = '';
+        let myResult = null;
+        let roomTerminated = false; // 房间是否因举报而被终止
+
+        // ==================== 工具函数 ====================
+        function generateRoomCode() {
+            return String(Math.floor(100000 + Math.random() * 900000));
+        }
+
+        function getPeerId(roomCode) {
+            return PEER_PREFIX + roomCode;
+        }
+
+        function showToast(msg) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = msg;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function showView(viewId) {
+            document.getElementById('lobbyView').style.display = 'none';
+            document.getElementById('hostView').style.display = 'none';
+            document.getElementById('playerView').style.display = 'none';
+            if (viewId) {
+                document.getElementById(viewId).style.display = 'block';
+            }
+        }
+
+        function showRulesModal() {
+            document.getElementById('rulesModal').style.display = 'flex';
+        }
+
+        function closeRulesModal() {
+            document.getElementById('rulesModal').style.display = 'none';
+        }
+
+        function copyRoomCode() {
+            if (myRoomCode) {
+                navigator.clipboard.writeText(myRoomCode).then(() => {
+                    showToast('📋 房间号已复制：' + myRoomCode);
+                }).catch(() => {
+                    showToast('房间号：' + myRoomCode + ' （请手动复制）');
+                });
+            }
+        }
+
+        // ==================== 图片处理 ====================
+        function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (file.size > 5 * 1024 * 1024) {
+                showToast('⚠️ 图片过大，请选择小于5MB的图片');
+                event.target.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                publishedImageBase64 = e.target.result;
+                const uploadZone = document.getElementById('uploadZone');
+                uploadZone.classList.add('has-image');
+                uploadZone.innerHTML = `
+                        <img src="${publishedImageBase64}" alt="已上传图片">
+                        <span style="font-size:0.75em;color:var(--green);margin-top:4px;">✅ 图片已就绪，点击可更换</span>
+                        <input type="file" id="imageFileInput" accept="image/*" onchange="handleImageUpload(event)" style="position:absolute;inset:0;opacity:0;cursor:pointer;">
+                    `;
+                updatePublishButton();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function updatePublishButton() {
+            const btnPublish = document.getElementById('btnPublish');
+            if (publishedImageBase64) {
+                btnPublish.disabled = false;
+                btnPublish.textContent = '📢 发布题目';
+            } else {
+                btnPublish.disabled = true;
+                btnPublish.textContent = '📢 请先上传图片';
+            }
+        }
+
+        // ==================== 停止游戏（举报触发） ====================
+        function terminateRoom(reason = '因举报而停止') {
+            if (roomTerminated) return;
+            roomTerminated = true;
+
+            // 清除题目
+            publishedImageBase64 = null;
+            publishedHints = [];
+            isPublished = false;
+            allAnswers = [];
+
+            // 房主端 UI
+            if (myRole === 'host') {
+                document.getElementById('hostPublishCard').style.display = 'none';
+                document.getElementById('hostPublishedCard').style.display = 'none';
+                document.getElementById('hostAnswersCard').style.display = 'none';
+                document.getElementById('hostTerminatedCard').style.display = 'block';
+                document.getElementById('hostConnStatus').innerHTML = '<span>🔴</span> 房间已终止';
+                document.getElementById('hostConnStatus').className = 'status-bar status-disconnected';
+                // 广播终止状态
+                broadcastTermination(reason);
+                // 关闭所有玩家连接
+                Object.values(connections).forEach(c => {
+                    try { c.conn.close(); } catch (e) {}
+                });
+                connections = {};
+            } else if (myRole === 'player') {
+                document.getElementById('playerWaitingCard').style.display = 'none';
+                document.getElementById('playerContentCard').style.display = 'none';
+                document.getElementById('playerSubmitCard').style.display = 'none';
+                document.getElementById('playerAnswersCard').style.display = 'none';
+                document.getElementById('playerTerminatedCard').style.display = 'block';
+                document.getElementById('playerConnStatus').innerHTML = '<span>🔴</span> 房间已终止';
+                document.getElementById('playerConnStatus').className = 'status-bar status-disconnected';
+                document.getElementById('btnReport').disabled = true;
+            }
+
+            showToast('🚫 房间' + reason);
+        }
+
+        function broadcastTermination(reason) {
+            const msg = { type: 'room_terminated', reason: reason };
+            Object.values(connections).forEach(c => {
+                try { c.conn.send(msg); } catch (e) {}
+            });
+        }
+
+        // ==================== 举报功能（玩家端） ====================
+        function reportRoom() {
+            if (roomTerminated) {
+                showToast('房间已终止，无需重复举报');
+                return;
+            }
+            if (!hostConn) {
+                showToast('⚠️ 未连接房主，无法举报');
+                return;
+            }
+            if (confirm('确定要举报该房间的图片吗？举报后房间将立即停止，图片会被撤销。')) {
+                try {
+                    hostConn.send({ type: 'report' });
+                    showToast('🚩 已提交举报，房间正在停止...');
+                    // 本地也立即终止
+                    terminateRoom('因举报而停止');
+                } catch (e) {
+                    showToast('❌ 举报发送失败');
+                }
+            }
+        }
+
+        // ==================== 房主端逻辑 ====================
+        function createRoom() {
+            const roomCode = generateRoomCode();
+            const peerId = getPeerId(roomCode);
+
+            document.getElementById('btnCreateRoom').disabled = true;
+            document.getElementById('btnCreateRoom').textContent = '⏳ 正在创建...';
+
+            const peer = new Peer(peerId, {
+                debug: 0
+            });
+
+            peer.on('open', function(id) {
+                myPeer = peer;
+                myRole = 'host';
+                myRoomCode = roomCode;
+                myNickname = '房主';
+                isPublished = false;
+                publishedImageBase64 = null;
+                publishedHints = [];
+                allAnswers = [];
+                connections = {};
+                roomTerminated = false;
+
+                showView('hostView');
+                document.getElementById('hostRoomBadge').textContent = roomCode;
+                document.getElementById('hostConnStatus').innerHTML = '<span>⏳</span> 等待玩家加入...';
+                document.getElementById('hostConnStatus').className = 'status-bar status-waiting';
+                document.getElementById('hostTerminatedCard').style.display = 'none';
+                updateHostPlayerTags();
+                resetHostPublishUI();
+                document.getElementById('hostAnswersCard').style.display = 'none';
+                document.getElementById('hostPublishedCard').style.display = 'none';
+                document.getElementById('btnCreateRoom').disabled = false;
+                document.getElementById('btnCreateRoom').textContent = '🏁 创建房间';
+                showToast('✅ 房间创建成功！房间号：' + roomCode);
+            });
+
+            peer.on('error', function(err) {
+                console.error('Peer error:', err);
+                document.getElementById('btnCreateRoom').disabled = false;
+                document.getElementById('btnCreateRoom').textContent = '🏁 创建房间';
+                if (err.type === 'unavailable-id') {
+                    showToast('⚠️ 房间号冲突，正在重新生成...');
+                    peer.destroy();
+                    setTimeout(() => createRoom(), 500);
+                } else {
+                    showToast('❌ 创建房间失败：' + err.message);
+                }
+            });
+
+            peer.on('connection', function(conn) {
+                handleHostIncomingConnection(conn);
+            });
+
+            peer.on('disconnected', function() {
+                showToast('⚠️ 信令服务器断开，尝试重连...');
+                if (myPeer) {
+                    myPeer.reconnect();
+                }
+            });
+        }
+
+        function handleHostIncomingConnection(conn) {
+            const connId = conn.peer;
+
+            conn.on('open', function() {
+                connections[connId] = {
+                    conn: conn,
+                    nickname: null,
+                    answer: null,
+                    result: null
+                };
+                updateHostPlayerTags();
+                updateHostConnStatus();
+            });
+
+            conn.on('data', function(data) {
+                handleHostMessage(connId, data);
+            });
+
+            conn.on('close', function() {
+                if (connections[connId]) {
+                    delete connections[connId];
+                    updateHostPlayerTags();
+                    updateHostConnStatus();
+                    if (!roomTerminated) {
+                        broadcastGameState();
+                        showToast('🔌 有玩家离开了房间');
+                    }
+                }
+            });
+
+            conn.on('error', function(err) {
+                console.error('Connection error:', err);
+                if (connections[connId]) {
+                    delete connections[connId];
+                    updateHostPlayerTags();
+                    updateHostConnStatus();
+                }
+            });
+        }
+
+        function handleHostMessage(connId, data) {
+            if (!data || typeof data !== 'object') return;
+            if (roomTerminated) return; // 已终止则忽略
+
+            switch (data.type) {
+                case 'join':
+                    if (connections[connId]) {
+                        connections[connId].nickname = data.nickname || ('玩家_' + connId.slice(-4));
+                        updateHostPlayerTags();
+                        updateHostConnStatus();
+                        sendGameStateToConnection(connections[connId].conn);
+                        broadcastPlayerList();
+                        showToast('🚗 ' + connections[connId].nickname + ' 加入了房间');
+                    }
+                    break;
+
+                case 'submit_answer':
+                    if (connections[connId] && isPublished && !roomTerminated) {
+                        connections[connId].answer = data.answer || '';
+                        connections[connId].result = null;
+                        syncAllAnswersFromConnections();
+                        broadcastGameState();
+                        updateHostAnswerListUI();
+                        showToast('📝 收到新答案');
+                    }
+                    break;
+
+                case 'report':
+                    // 收到玩家举报
+                    showToast('🚩 收到玩家举报，房间即将停止！');
+                    terminateRoom('因举报而停止');
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        function sendGameStateToConnection(conn) {
+            if (!conn || roomTerminated) return;
+            const state = buildGameState();
+            try {
+                conn.send(state);
+            } catch (e) {
+                console.error('发送游戏状态失败:', e);
+            }
+        }
+
+        function broadcastGameState() {
+            if (roomTerminated) return;
+            const state = buildGameState();
+            Object.values(connections).forEach(c => {
+                try {
+                    c.conn.send(state);
+                } catch (e) {
+                    console.error('广播失败:', e);
+                }
+            });
+        }
+
+        function broadcastPlayerList() {
+            if (roomTerminated) return;
+            const playerList = getPlayerList();
+            const msg = { type: 'player_list', players: playerList };
+            Object.values(connections).forEach(c => {
+                try {
+                    c.conn.send(msg);
+                } catch (e) {}
+            });
+        }
+
+        function buildGameState() {
+            syncAllAnswersFromConnections();
+            return {
+                type: 'game_state',
+                isPublished: isPublished,
+                image: publishedImageBase64,
+                hints: publishedHints,
+                answers: allAnswers,
+                hostNickname: '房主',
+                terminated: roomTerminated
+            };
+        }
+
+        function syncAllAnswersFromConnections() {
+            const answerMap = {};
+            allAnswers.forEach(a => {
+                if (a.nickname && a.nickname !== '房主') {
+                    answerMap[a.nickname] = a;
+                }
+            });
+            Object.values(connections).forEach(c => {
+                if (c.nickname && c.answer !== null && c.answer !== undefined && c.answer !== '') {
+                    answerMap[c.nickname] = {
+                        nickname: c.nickname,
+                        answer: c.answer,
+                        result: c.result
+                    };
+                }
+            });
+            allAnswers = Object.values(answerMap);
+        }
+
+        function getPlayerList() {
+            const list = [{ nickname: '房主', isHost: true }];
+            Object.values(connections).forEach(c => {
+                if (c.nickname) {
+                    list.push({ nickname: c.nickname, isHost: false });
+                }
+            });
+            return list;
+        }
+
+        function updateHostPlayerTags() {
+            const container = document.getElementById('hostPlayerTags');
+            const players = getPlayerList();
+            let html = '';
+            players.forEach(p => {
+                if (p.isHost) {
+                    html +=
+                        `<span class="player-tag host-tag"><span class="dot"></span> 🏁 ${p.nickname}</span>`;
+                } else {
+                    html +=
+                        `<span class="player-tag"><span class="dot"></span> ${p.nickname}</span>`;
+                }
+            });
+            if (players.length <= 1) {
+                html += '<span style="font-size:0.75em;color:#555;">暂无玩家加入</span>';
+            }
+            container.innerHTML = html;
+        }
+
+        function updateHostConnStatus() {
+            if (roomTerminated) return;
+            const statusEl = document.getElementById('hostConnStatus');
+            const playerCount = Object.keys(connections).length;
+            if (playerCount > 0) {
+                statusEl.innerHTML = '<span>🟢</span> 已连接 ' + playerCount + ' 位玩家';
+                statusEl.className = 'status-bar status-connected';
+            } else {
+                statusEl.innerHTML = '<span>⏳</span> 等待玩家加入...';
+                statusEl.className = 'status-bar status-waiting';
+            }
+        }
+
+        function resetHostPublishUI() {
+            document.getElementById('hostPublishCard').style.display = 'block';
+            document.getElementById('hostPublishedCard').style.display = 'none';
+            document.getElementById('hostAnswersCard').style.display = 'none';
+            document.getElementById('hostTerminatedCard').style.display = 'none';
+            const uploadZone = document.getElementById('uploadZone');
+            uploadZone.classList.remove('has-image');
+            uploadZone.innerHTML = `
+                    <span class="upload-icon">🖼️</span>
+                    <span class="upload-text">点击上传猜图图片（必需）</span>
+                    <span style="font-size:0.7em;color:#555;">支持 JPG/PNG/WebP，建议 ≤ 3MB</span>
+                    <input type="file" id="imageFileInput" accept="image/*" onchange="handleImageUpload(event)" style="position:absolute;inset:0;opacity:0;cursor:pointer;">
+                `;
+            document.getElementById('hostHintsInput').value = '';
+            document.getElementById('btnPublish').disabled = true;
+            document.getElementById('btnPublish').textContent = '📢 请先上传图片';
+            publishedImageBase64 = null;
+            publishedHints = [];
+            isPublished = false;
+            allAnswers = [];
+            updateHostAnswerListUI();
+        }
+
+        function publishContent() {
+            if (!publishedImageBase64) {
+                showToast('⚠️ 请先上传图片');
+                return;
+            }
+            const hintsRaw = document.getElementById('hostHintsInput').value.trim();
+            publishedHints = hintsRaw ? hintsRaw.split('\n').filter(h => h.trim() !== '') : [];
+            isPublished = true;
+            allAnswers = [];
+            roomTerminated = false;
+
+            document.getElementById('hostPublishCard').style.display = 'none';
+            document.getElementById('hostPublishedCard').style.display = 'block';
+            document.getElementById('hostAnswersCard').style.display = 'block';
+            document.getElementById('hostTerminatedCard').style.display = 'none';
+
+            document.getElementById('hostImageDisplay').innerHTML =
+                `<img src="${publishedImageBase64}" alt="题目图片">`;
+            const hintsDisplay = document.getElementById('hostHintsDisplay');
+            if (publishedHints.length > 0) {
+                hintsDisplay.innerHTML = publishedHints.map((h, i) =>
+                    `<li><span class="hint-num">💡${i + 1}</span> ${h}</li>`
+                ).join('');
+            } else {
+                hintsDisplay.innerHTML = '<li style="color:#777;">（无提示）</li>';
+            }
+
+            updateHostAnswerListUI();
+            broadcastGameState();
+            showToast('📢 题目已发布！玩家可以开始竞猜');
+        }
+
+        function updateHostAnswerListUI() {
+            const listEl = document.getElementById('hostAnswerList');
+            if (roomTerminated) {
+                listEl.innerHTML = '<li style="color:var(--text-secondary);text-align:center;padding:20px;">房间已终止</li>';
+                return;
+            }
+            syncAllAnswersFromConnections();
+            if (allAnswers.length === 0) {
+                listEl.innerHTML =
+                    '<li style="color:var(--text-secondary);text-align:center;padding:20px;">暂无玩家提交答案</li>';
+            } else {
+                listEl.innerHTML = allAnswers.map((a, idx) => {
+                    let liClass = 'pending';
+                    let statusHtml = '<span class="status-badge status-pending">等待判定</span>';
+                    if (a.result === 'correct') {
+                        liClass = 'correct';
+                        statusHtml = '<span class="status-badge status-correct">✅ 正确</span>';
+                    } else if (a.result === 'wrong') {
+                        liClass = 'wrong';
+                        statusHtml = '<span class="status-badge status-wrong">❌ 错误</span>';
+                    }
+                    let btnGroupHtml = '';
+                    if (a.result === null && !roomTerminated) {
+                        btnGroupHtml = `
+                                <div class="btn-group">
+                                    <button class="btn btn-xs btn-success" onclick="judgeAnswer('${a.nickname}', 'correct')">✓ 对</button>
+                                    <button class="btn btn-xs btn-danger" onclick="judgeAnswer('${a.nickname}', 'wrong')">✗ 错</button>
+                                </div>`;
+                    }
+                    return `
+                            <li class="${liClass}" id="answer-item-${idx}">
+                                <span class="player-name">🏎️ ${escapeHtml(a.nickname)}</span>
+                                <span class="answer-text">${escapeHtml(a.answer)}</span>
+                                ${statusHtml}
+                                ${btnGroupHtml}
+                            </li>`;
+                }).join('');
+            }
+        }
+
+        function judgeAnswer(nickname, result) {
+            if (roomTerminated) return;
+            let found = false;
+            Object.values(connections).forEach(c => {
+                if (c.nickname === nickname) {
+                    c.result = result;
+                    found = true;
+                }
+            });
+            if (found) {
+                syncAllAnswersFromConnections();
+                updateHostAnswerListUI();
+                broadcastGameState();
+                const resultText = result === 'correct' ? '✅ 正确' : '❌ 错误';
+                showToast('判定：' + nickname + ' → ' + resultText);
+            }
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // ==================== 玩家端逻辑 ====================
+        function joinRoom() {
+            const nickname = document.getElementById('playerNickname').value.trim();
+            const roomCode = document.getElementById('roomCodeInput').value.trim();
+
+            if (!nickname) {
+                showToast('⚠️ 请输入你的昵称');
+                return;
+            }
+            if (!/^\d{6}$/.test(roomCode)) {
+                showToast('⚠️ 请输入6位数字房间号');
+                return;
+            }
+
+            const peerId = getPeerId(roomCode);
+            document.getElementById('btnJoinRoom').disabled = true;
+            document.getElementById('btnJoinRoom').textContent = '⏳ 正在连接...';
+
+            const peer = new Peer({
+                debug: 0
+            });
+
+            peer.on('open', function(id) {
+                myPeer = peer;
+                myRole = 'player';
+                myRoomCode = roomCode;
+                myNickname = nickname;
+                myAnswerSubmitted = false;
+                myAnswerText = '';
+                myResult = null;
+                isPublished = false;
+                publishedImageBase64 = null;
+                publishedHints = [];
+                allAnswers = [];
+                roomTerminated = false;
+
+                const conn = peer.connect(peerId, {
+                    reliable: true
+                });
+
+                conn.on('open', function() {
+                    hostConn = conn;
+                    conn.send({
+                        type: 'join',
+                        nickname: myNickname
+                    });
+                    showView('playerView');
+                    document.getElementById('playerRoomBadge').textContent = roomCode;
+                    document.getElementById('playerConnStatus').innerHTML = '<span>🟢</span> 已连接';
+                    document.getElementById('playerConnStatus').className = 'status-bar status-connected';
+                    document.getElementById('playerTerminatedCard').style.display = 'none';
+                    document.getElementById('btnReport').disabled = false;
+                    resetPlayerUI();
+                    document.getElementById('btnJoinRoom').disabled = false;
+                    document.getElementById('btnJoinRoom').textContent = '🔗 加入房间';
+                    showToast('✅ 成功加入房间！');
+                    showRulesModal();
+                });
+
+                conn.on('data', function(data) {
+                    handlePlayerMessage(data);
+                });
+
+                conn.on('close', function() {
+                    if (!roomTerminated) {
+                        showToast('🔌 与房主的连接已断开');
+                        document.getElementById('playerConnStatus').innerHTML = '<span>🔴</span> 连接断开';
+                        document.getElementById('playerConnStatus').className = 'status-bar status-disconnected';
+                    }
+                    hostConn = null;
+                });
+
+                conn.on('error', function(err) {
+                    console.error('Connection error:', err);
+                    showToast('❌ 连接出错：' + err.message);
+                    document.getElementById('btnJoinRoom').disabled = false;
+                    document.getElementById('btnJoinRoom').textContent = '🔗 加入房间';
+                });
+
+                setTimeout(() => {
+                    if (hostConn === null && myRole === 'player') {
+                        showToast('⚠️ 连接超时，请检查房间号是否正确');
+                        document.getElementById('btnJoinRoom').disabled = false;
+                        document.getElementById('btnJoinRoom').textContent = '🔗 加入房间';
+                        if (myPeer) {
+                            myPeer.destroy();
+                            myPeer = null;
+                        }
+                        showView('lobbyView');
+                    }
+                }, 12000);
+            });
+
+            peer.on('error', function(err) {
+                console.error('Peer error:', err);
+                showToast('❌ 连接失败：' + err.message);
+                document.getElementById('btnJoinRoom').disabled = false;
+                document.getElementById('btnJoinRoom').textContent = '🔗 加入房间';
+            });
+
+            peer.on('disconnected', function() {
+                if (myPeer) myPeer.reconnect();
+            });
+        }
+
+        function handlePlayerMessage(data) {
+            if (!data || typeof data !== 'object') return;
+
+            switch (data.type) {
+                case 'game_state':
+                    if (data.terminated) {
+                        terminateRoom('因举报而停止');
+                        return;
+                    }
+                    isPublished = data.isPublished || false;
+                    publishedImageBase64 = data.image || null;
+                    publishedHints = data.hints || [];
+                    allAnswers = data.answers || [];
+                    roomTerminated = false;
+                    if (myNickname) {
+                        const myAns = allAnswers.find(a => a.nickname === myNickname);
+                        if (myAns) {
+                            myAnswerText = myAns.answer;
+                            myResult = myAns.result;
+                            myAnswerSubmitted = true;
+                        }
+                    }
+                    updatePlayerUI();
+                    break;
+
+                case 'player_list':
+                    updatePlayerPlayerTags(data.players || []);
+                    break;
+
+                case 'room_terminated':
+                    terminateRoom(data.reason || '因举报而停止');
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        function resetPlayerUI() {
+            document.getElementById('playerWaitingCard').style.display = 'block';
+            document.getElementById('playerContentCard').style.display = 'none';
+            document.getElementById('playerSubmitCard').style.display = 'none';
+            document.getElementById('playerAnswersCard').style.display = 'none';
+            document.getElementById('playerTerminatedCard').style.display = 'none';
+            document.getElementById('playerImageDisplay').innerHTML = '';
+            document.getElementById('playerHintsDisplay').innerHTML = '';
+            document.getElementById('playerAnswerInput').value = '';
+            document.getElementById('playerAnswerList').innerHTML =
+                '<li style="color:var(--text-secondary);text-align:center;padding:20px;">暂无答案</li>';
+            document.getElementById('playerPlayerTags').innerHTML = '';
+            document.getElementById('btnReport').disabled = false;
+        }
+
+        function updatePlayerUI() {
+            if (roomTerminated) {
+                document.getElementById('playerWaitingCard').style.display = 'none';
+                document.getElementById('playerContentCard').style.display = 'none';
+                document.getElementById('playerSubmitCard').style.display = 'none';
+                document.getElementById('playerAnswersCard').style.display = 'none';
+                document.getElementById('playerTerminatedCard').style.display = 'block';
+                return;
+            }
+            document.getElementById('playerTerminatedCard').style.display = 'none';
+            if (!isPublished) {
+                document.getElementById('playerWaitingCard').style.display = 'block';
+                document.getElementById('playerContentCard').style.display = 'none';
+                document.getElementById('playerSubmitCard').style.display = 'none';
+                document.getElementById('playerAnswersCard').style.display = 'none';
+            } else {
+                document.getElementById('playerWaitingCard').style.display = 'none';
+                document.getElementById('playerContentCard').style.display = 'block';
+                document.getElementById('playerImageDisplay').innerHTML =
+                    publishedImageBase64 ? `<img src="${publishedImageBase64}" alt="题目图片">` :
+                    '<p style="color:#777;">无图片</p>';
+                const hintsDisplay = document.getElementById('playerHintsDisplay');
+                if (publishedHints.length > 0) {
+                    hintsDisplay.innerHTML = publishedHints.map((h, i) =>
+                        `<li><span class="hint-num">💡${i + 1}</span> ${h}</li>`
+                    ).join('');
+                } else {
+                    hintsDisplay.innerHTML = '<li style="color:#777;">（无提示）</li>';
+                }
+                document.getElementById('playerSubmitCard').style.display = 'block';
+                if (myAnswerSubmitted && myResult === null) {
+                    document.getElementById('playerAnswerInput').value = myAnswerText;
+                }
+                document.getElementById('playerAnswersCard').style.display = 'block';
+                updatePlayerAnswerListUI();
+            }
+        }
+
+        function updatePlayerAnswerListUI() {
+            const listEl = document.getElementById('playerAnswerList');
+            if (roomTerminated) {
+                listEl.innerHTML = '<li style="color:var(--text-secondary);text-align:center;padding:20px;">房间已终止</li>';
+                return;
+            }
+            if (allAnswers.length === 0) {
+                listEl.innerHTML =
+                    '<li style="color:var(--text-secondary);text-align:center;padding:20px;">暂无答案</li>';
+            } else {
+                listEl.innerHTML = allAnswers.map(a => {
+                    let liClass = 'pending';
+                    let statusHtml = '<span class="status-badge status-pending">等待判定</span>';
+                    if (a.result === 'correct') {
+                        liClass = 'correct';
+                        statusHtml = '<span class="status-badge status-correct">✅ 正确</span>';
+                    } else if (a.result === 'wrong') {
+                        liClass = 'wrong';
+                        statusHtml = '<span class="status-badge status-wrong">❌ 错误</span>';
+                    }
+                    const isMe = a.nickname === myNickname;
+                    const nameDisplay = isMe ? '⭐ ' + escapeHtml(a.nickname) : '🏎️ ' + escapeHtml(a.nickname);
+                    return `
+                            <li class="${liClass}">
+                                <span class="player-name">${nameDisplay}</span>
+                                <span class="answer-text">${escapeHtml(a.answer)}</span>
+                                ${statusHtml}
+                            </li>`;
+                }).join('');
+            }
+        }
+
+        function updatePlayerPlayerTags(players) {
+            const container = document.getElementById('playerPlayerTags');
+            if (!players || players.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+            let html = '';
+            players.forEach(p => {
+                if (p.isHost) {
+                    html +=
+                        `<span class="player-tag host-tag"><span class="dot"></span> 🏁 ${p.nickname}</span>`;
+                } else {
+                    html +=
+                        `<span class="player-tag"><span class="dot"></span> ${p.nickname}</span>`;
+                }
+            });
+            container.innerHTML = html;
+        }
+
+        function submitAnswer() {
+            if (!hostConn || !isPublished || roomTerminated) {
+                showToast('⚠️ 当前无法提交答案');
+                return;
+            }
+            const answer = document.getElementById('playerAnswerInput').value.trim();
+            if (!answer) {
+                showToast('⚠️ 请输入答案');
+                return;
+            }
+            myAnswerText = answer;
+            myAnswerSubmitted = true;
+            myResult = null;
+            try {
+                hostConn.send({
+                    type: 'submit_answer',
+                    answer: answer,
+                    nickname: myNickname
+                });
+                showToast('📝 答案已提交！');
+                document.getElementById('playerAnswerInput').value = '';
+            } catch (e) {
+                showToast('❌ 提交失败，请重试');
+            }
+        }
+
+        // ==================== 退出房间 ====================
+        function leaveRoom() {
+            if (myRole === 'host') {
+                if (!roomTerminated) {
+                    Object.values(connections).forEach(c => {
+                        try {
+                            c.conn.send({ type: 'host_left' });
+                            c.conn.close();
+                        } catch (e) {}
+                    });
+                }
+                connections = {};
+                if (myPeer) {
+                    myPeer.destroy();
+                    myPeer = null;
+                }
+            } else if (myRole === 'player') {
+                if (hostConn) {
+                    try {
+                        hostConn.close();
+                    } catch (e) {}
+                    hostConn = null;
+                }
+                if (myPeer) {
+                    myPeer.destroy();
+                    myPeer = null;
+                }
+            }
+            myRole = null;
+            myPeer = null;
+            myRoomCode = null;
+            myNickname = null;
+            connections = {};
+            hostConn = null;
+            publishedImageBase64 = null;
+            publishedHints = [];
+            isPublished = false;
+            allAnswers = [];
+            myAnswerSubmitted = false;
+            myAnswerText = '';
+            myResult = null;
+            roomTerminated = false;
+            showView('lobbyView');
+            document.getElementById('btnCreateRoom').disabled = false;
+            document.getElementById('btnCreateRoom').textContent = '🏁 创建房间';
+            document.getElementById('btnJoinRoom').disabled = false;
+            document.getElementById('btnJoinRoom').textContent = '🔗 加入房间';
+            document.getElementById('playerNickname').value = '';
+            document.getElementById('roomCodeInput').value = '';
+            document.getElementById('hostHintsInput').value = '';
+            showToast('👋 已退出房间');
+        }
+
+        // ==================== 页面初始化 ====================
+        function init() {
+            showView('lobbyView');
+            document.getElementById('roomCodeInput').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    joinRoom();
+                }
+            });
+            document.getElementById('playerNickname').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    document.getElementById('roomCodeInput').focus();
+                }
+            });
+            document.getElementById('playerAnswerInput').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    submitAnswer();
+                }
+            });
+            document.getElementById('rulesModal').addEventListener('click', function(e) {
+                if (e.target === this) {
+                    closeRulesModal();
+                }
+            });
+            window.addEventListener('beforeunload', function() {
+                if (myPeer) {
+                    try { myPeer.destroy(); } catch (e) {}
+                }
+            });
+        }
+
+        init();
+        console.log('🏎️ 车迷猜图 - P2P联机竞猜游戏已就绪');
+        console.log('PeerJS CDN: https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js');
+        console.log('信令服务器: 0.peerjs.com (默认)');
+        console.log('图片传输: base64 内存传输，不上传任何服务器');
+        console.log('新增功能：上传提醒 + 举报终止游戏');
+    </script>
+</body>
+</html>
